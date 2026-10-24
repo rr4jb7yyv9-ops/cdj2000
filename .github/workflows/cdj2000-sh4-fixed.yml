@@ -1,0 +1,65 @@
+name: CDJ-2000 SH-4 FIXED build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3 python3-venv python3-pip \
+            curl ca-certificates pkg-config ninja-build meson libglib2.0-dev \
+            libpixman-1-dev zlib1g-dev libfdt-dev libcapstone-dev \
+            libslirp-dev liburing-dev libaio-dev flex bison git unzip
+      - name: Automatically fix legacy SH-4 translator flag
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYFIX'
+          from pathlib import Path
+          p = Path("scripts/build-qemu.sh")
+          if not p.is_file():
+              raise SystemExit("Missing scripts/build-qemu.sh; check repository folders")
+          content = p.read_text(encoding="utf-8")
+          marker = 'python3 "$PORT/check_patched.py" "$QEMU" "$PORT/source_files.json"'
+          correction = (
+              "sed -i 's/TB_FLAG_GUSA_EXCLUSIVE/TB_FLAG_GUSA_MASK/g' "
+              "\"$QEMU/target/sh4/translate.c\"\n"
+              "grep -q 'TB_FLAG_GUSA_MASK | TB_FLAG_DELAY_SLOT_RTE' "
+              "\"$QEMU/target/sh4/translate.c\"\n"
+              "echo 'CONFIRMED: SH-4 GUSA compatibility fix applied before compilation.'"
+          )
+          if "CONFIRMED: SH-4 GUSA compatibility fix applied before compilation." not in content:
+              if marker not in content:
+                  raise SystemExit("Unexpected build script structure; cannot safely insert fix")
+              content = content.replace(marker, marker + "\n" + correction, 1)
+              p.write_text(content, encoding="utf-8")
+          assert "TB_FLAG_GUSA_EXCLUSIVE/TB_FLAG_GUSA_MASK" in content
+          print("Verified: build script includes SH-4 compatibility fix")
+          PYFIX
+          bash -n scripts/build-qemu.sh
+      - name: Build CDJ SH-4 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-qemu.sh 2>&1 | tee build-output.log
+      - name: Upload emulator and diagnostics (even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CDJ2000-sh4-fixed-build
+          path: |
+            build-output.log
+            ci-output/
+            work/qemu-master/build/meson-logs/
+          if-no-files-found: warn
+          retention-days: 7
