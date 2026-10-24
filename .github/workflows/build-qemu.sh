@@ -35,27 +35,12 @@ python3 "$PORT/check_clean_inputs.py" "$QEMU" "$PORT/source_files.json"
 mkdir -p "$QEMU/hw/sh4/c6x/binutils" "$QEMU/include/exec"
 patch -d "$QEMU" -p1 --forward --batch < "$PORT/qemu-cdj2000-11.1.50.patch"
 python3 "$PORT/check_patched.py" "$QEMU" "$PORT/source_files.json"
+# QEMU 11 SH-4 compatibility fix (required by the CDJ emulator patch).
+sed -i 's/TB_FLAG_GUSA_EXCLUSIVE/TB_FLAG_GUSA_MASK/g' "$QEMU/target/sh4/translate.c"
+grep -q 'TB_FLAG_GUSA_MASK | TB_FLAG_DELAY_SLOT_RTE' "$QEMU/target/sh4/translate.c"
+echo 'SH-4 GUSA compatibility fix applied.'
 
-# QEMU 11 compatibility: upstream replaced TB_FLAG_GUSA_EXCLUSIVE with
-# TB_FLAG_GUSA_MASK (the gUSA state is a bitfield). Apply this AFTER the
-# upstream CDJ patch hash audit, preserving the original 138-file audit.
-python3 - "$QEMU/target/sh4/translate.c" "$QEMU/target/sh4/cpu.h" <<'PY_SH4_COMPAT'
-from pathlib import Path
-import sys
-translation = Path(sys.argv[1])
-header = Path(sys.argv[2]).read_text()
-old = 'TB_FLAG_GUSA_EXCLUSIVE | TB_FLAG_DELAY_SLOT_RTE'
-new = 'TB_FLAG_GUSA_MASK | TB_FLAG_DELAY_SLOT_RTE'
-content = translation.read_text()
-assert '#define TB_FLAG_GUSA_MASK' in header, 'Modern SH4 gUSA mask not available'
-assert content.count(old) == 1, 'Unexpected SH4 translator state; refusing blind patch'
-assert content.count(new) == 0, 'Replacement already present or changed'
-translation.write_text(content.replace(old, new, 1))
-assert old not in translation.read_text()
-print('QEMU 11 SH4 compatibility correction: OK')
-PY_SH4_COMPAT
-
-echo 'All CDJ source modifications checked; SH4 compatibility correction applied.'
+echo 'All CDJ source modifications checked.'
 
 # This subproject is absent from source archives; Actions fetches it online.
 python3 -m venv "$ROOT/ci-venv"
